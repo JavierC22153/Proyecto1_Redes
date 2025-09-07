@@ -1,9 +1,13 @@
 import json
 import os
+import sys
+import asyncio
 from datetime import datetime
-from typing import List, Dict
+from typing import Dict, Any
 import anthropic
 from dotenv import load_dotenv
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 
 # Cargar variables de entorno
 load_dotenv()
@@ -11,187 +15,293 @@ load_dotenv()
 
 class MCPChatbot:
     def __init__(self):
-        # 1. Conexión con LLM (Anthropic Claude)
         api_key = os.getenv('ANTHROPIC_API_KEY')
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY no encontrada en el archivo .env")
         
         self.client = anthropic.Anthropic(api_key=api_key)
-        self.model = "claude-3-sonnet-20240229"
+        self.model = "claude-3-5-haiku-20241022"
         
-        # 2. Contexto de la conversación
         self.conversation_history = []
-        
-        # 3. Logging de interacciones
         self.log_file = "mcp_interactions.log"
         self.setup_logging()
-    
+        
+        self.mcp_sessions = {}
+        self.available_tools = {}
+
     def setup_logging(self):
-        # Crear archivo de log si no existe
+        """Configurar el archivo de log"""
         if not os.path.exists(self.log_file):
             with open(self.log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== MCP Chatbot Log - Iniciado: {datetime.now().isoformat()} ===\n")
-    
-    def log_interaction(self, interaction_type: str, content: str, response: str = None):
+
+    def log_interaction(self, interaction_type: str, content: str, response: Any = None):
+        """Registrar interacciones en el log"""
         timestamp = datetime.now().isoformat()
-        
         log_entry = {
             "timestamp": timestamp,
             "type": interaction_type,
-            "user_input": content,
-            "llm_response": response,
-            "context_length": len(self.conversation_history)
+            "content": content,
+            "response": str(response) if response else None,
+            "available_servers": list(self.mcp_sessions.keys()),
+            "tools_count": len(self.available_tools)
         }
         
-        # Escribir al archivo de log
         with open(self.log_file, 'a', encoding='utf-8') as f:
-            f.write(f"\n{json.dumps(log_entry, indent=2, ensure_ascii=False)}\n")
-        
-        print(f"📝 [LOG] {interaction_type} registrado - {timestamp}")
-    
-    def add_to_context(self, role: str, content: str):
-        self.conversation_history.append({
-            "role": role,
-            "content": content
-        })
-        
-        # Limitar contexto a últimos 20 mensajes para evitar exceso de tokens
-        if len(self.conversation_history) > 20:
-            self.conversation_history = self.conversation_history[-20:]
-    
-    def send_message(self, user_input: str) -> str:
+            f.write(f"{json.dumps(log_entry, ensure_ascii=False)}\n")
+
+    async def connect_to_server(self, server_name: str, server_params: StdioServerParameters):
+        """Conectar a un servidor MCP"""
         try:
-            # Agregar mensaje del usuario al contexto
+            async with asyncio.timeout(10):
+                async with stdio_client(server_params) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.list_tools()
+                        
+                        self.mcp_sessions[server_name] = {
+                            'params': server_params,
+                            'tools': result.tools
+                        }
+                        
+                        for tool in result.tools:
+                            tool_key = f"{server_name}_{tool.name}"
+                            self.available_tools[tool_key] = {
+                                "server": server_name,
+                                "tool": tool
+                            }
+                        
+                        self.log_interaction("MCP_INIT", server_name, {"status": "success", "tools": len(result.tools)})
+                        return True
+                        
+        except Exception as e:
+            self.log_interaction("MCP_ERROR", server_name, {"error": str(e)})
+            return False
+
+    async def initialize_mcp_servers(self):
+        """Inicializar servidores MCP"""
+        # Servidor filesystem
+        filesystem_params = StdioServerParameters(
+            command="npx",
+            args=["-y", "@modelcontextprotocol/server-filesystem", os.getcwd()]
+        )
+        await self.connect_to_server("filesystem", filesystem_params)
+        
+        # Servidor git
+        git_params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "mcp_server_git", "--repository", os.getcwd()]
+        )
+        await self.connect_to_server("git", git_params)
+
+    async def execute_mcp_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]):
+        """Ejecutar una herramienta MCP"""
+        try:
+            if server_name not in self.mcp_sessions:
+                return f"Servidor {server_name} no disponible"
+            
+            server_params = self.mcp_sessions[server_name]['params']
+            
+            async with asyncio.timeout(30):
+                async with stdio_client(server_params) as (read, write):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.call_tool(tool_name, arguments)
+                        
+                        self.log_interaction("MCP_TOOL_EXECUTION", 
+                                           f"{server_name}.{tool_name}({arguments})", 
+                                           str(result))
+                        
+                        response_text = ""
+                        for content in result.content:
+                            if hasattr(content, 'text'):
+                                response_text += content.text + "\n"
+                        
+                        return response_text.strip() if response_text else "Herramienta ejecutada correctamente"
+                        
+        except Exception as e:
+            error_msg = f"Error ejecutando {server_name}.{tool_name}: {e}"
+            self.log_interaction("MCP_TOOL_ERROR", f"{server_name}.{tool_name}", error_msg)
+            return error_msg
+
+    def add_to_context(self, role: str, content: str):
+        """Agregar mensaje al contexto de conversación"""
+        self.conversation_history.append({"role": role, "content": content})
+        if len(self.conversation_history) > 20:  # Mantener solo los últimos 20 mensajes
+            self.conversation_history = self.conversation_history[-20:]
+
+    def get_available_tools_info(self) -> str:
+        """Obtener información de herramientas disponibles"""
+        if not self.available_tools:
+            return "No hay herramientas MCP disponibles."
+        
+        info = "Herramientas MCP disponibles:\n\n"
+        for tool_key, tool_info in self.available_tools.items():
+            tool = tool_info['tool']
+            server = tool_info['server']
+            info += f"• {tool.name} ({server}): {tool.description}\n"
+        
+        return info
+
+    def create_system_prompt(self) -> str:
+        """Crear prompt del sistema"""
+        base_prompt = """Eres un asistente AI con acceso a herramientas MCP para manipular archivos y repositorios Git.
+
+Puedes ayudar con tareas como:
+- Leer y escribir archivos
+- Listar directorios
+- Operaciones de Git (commits, branches, etc.)
+- Buscar archivos y contenido
+
+Responde de manera directa y concisa. Cuando uses herramientas, explica qué estás haciendo."""
+        
+        if self.available_tools:
+            tools_info = "\n\nHerramientas disponibles:\n"
+            for tool_key, tool_info in self.available_tools.items():
+                tool = tool_info['tool']
+                tools_info += f"- {tool.name}: {tool.description}\n"
+            base_prompt += tools_info
+            
+        return base_prompt
+
+    async def handle_tool_calls(self, response):
+        """Manejar llamadas a herramientas de Claude"""
+        assistant_response = ""
+        
+        for content in response.content:
+            if content.type == "text":
+                assistant_response += content.text
+            elif content.type == "tool_use":
+                tool_name = content.name
+                arguments = content.input
+                
+                # Buscar servidor de la herramienta
+                server_name = None
+                for tool_key, tool_info in self.available_tools.items():
+                    if tool_info['tool'].name == tool_name:
+                        server_name = tool_info['server']
+                        break
+                
+                if server_name:
+                    result = await self.execute_mcp_tool(server_name, tool_name, arguments)
+                    assistant_response += f"\n\nResultado de {tool_name}:\n{result}\n"
+                else:
+                    assistant_response += f"\nHerramienta {tool_name} no encontrada.\n"
+                    
+        return assistant_response
+
+    async def process_query(self, user_input: str) -> str:
+        """Procesar consulta del usuario"""
+        try:
             self.add_to_context("user", user_input)
+            self.log_interaction("USER_QUERY", user_input)
             
-            # Log de la solicitud
-            self.log_interaction("REQUEST", user_input)
-            
-            # Enviar a Claude con todo el contexto
+            # Preparar herramientas para Claude
+            tools = []
+            for tool_info in self.available_tools.values():
+                tool = tool_info['tool']
+                tools.append({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": tool.inputSchema,
+                })
+
+            # Llamar a Claude
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=1000,
-                messages=self.conversation_history
+                max_tokens=1500,
+                system=self.create_system_prompt(),
+                messages=self.conversation_history,
+                tools=tools if tools else None
             )
+
+            # Procesar respuesta
+            assistant_response = await self.handle_tool_calls(response)
             
-            assistant_response = response.content[0].text
-            
-            # Agregar respuesta del asistente al contexto
             self.add_to_context("assistant", assistant_response)
-            
-            # Log de la respuesta
-            self.log_interaction("RESPONSE", user_input, assistant_response)
+            self.log_interaction("ASSISTANT_RESPONSE", user_input, assistant_response)
             
             return assistant_response
             
         except Exception as e:
-            error_msg = f"Error al comunicarse con Claude: {str(e)}"
-            self.log_interaction("ERROR", user_input, error_msg)
+            error_msg = f"Error procesando consulta: {str(e)}"
+            self.log_interaction("PROCESSING_ERROR", user_input, error_msg)
             return error_msg
-    
-    def show_conversation_stats(self):
-        print(f"\n Estadísticas de la sesión:")
-        print(f"   • Mensajes en contexto: {len(self.conversation_history)}")
-        print(f"   • Archivo de log: {self.log_file}")
-        
-        # Contar interacciones del log
-        try:
-            with open(self.log_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-                interactions = content.count('"type":')
-            print(f"   • Total interacciones registradas: {interactions}")
-        except:
-            print(f"   • No se pudo leer el archivo de log")
-    
+
     def show_recent_logs(self, limit: int = 5):
-        print(f"\n Últimas {limit} interacciones:")
-        print("-" * 50)
+        """Mostrar logs recientes"""
+        print(f"\nÚltimas {limit} interacciones:")
+        print("-" * 60)
         
         try:
             with open(self.log_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
             
-            # Buscar las últimas entradas JSON
-            log_entries = []
-            current_entry = ""
+            # Obtener las últimas entradas
+            recent_entries = []
+            for line in reversed(lines):
+                line = line.strip()
+                if line and not line.startswith('==='):
+                    try:
+                        entry = json.loads(line)
+                        recent_entries.append(entry)
+                        if len(recent_entries) >= limit:
+                            break
+                    except json.JSONDecodeError:
+                        continue
             
-            for line in lines:
-                if line.strip().startswith('{"timestamp"'):
-                    if current_entry:
-                        try:
-                            entry = json.loads(current_entry)
-                            log_entries.append(entry)
-                        except:
-                            pass
-                    current_entry = line.strip()
-                elif current_entry and (line.strip().startswith('}') or '"' in line):
-                    current_entry += line.strip()
-                    if line.strip().endswith('}'):
-                        try:
-                            entry = json.loads(current_entry)
-                            log_entries.append(entry)
-                            current_entry = ""
-                        except:
-                            current_entry = ""
-            
-            # Mostrar las últimas entradas
-            for entry in log_entries[-limit:]:
+            # Mostrar en orden cronológico
+            for entry in reversed(recent_entries):
                 timestamp = entry.get('timestamp', 'N/A')
-                interaction_type = entry.get('type', 'N/A')
-                user_input = entry.get('user_input', 'N/A')[:50] + "..."
+                entry_type = entry.get('type', 'N/A')
+                content = entry.get('content', 'N/A')
+                print(f"[{timestamp}] {entry_type}: {content[:80]}...")
                 
-                print(f"[{timestamp}] {interaction_type}")
-                print(f"   Input: {user_input}")
-                if entry.get('llm_response'):
-                    response_preview = entry['llm_response'][:100] + "..."
-                    print(f"   Response: {response_preview}")
-                print()
-        
         except Exception as e:
             print(f"Error al leer logs: {e}")
-    
-    def run(self):
-        print(" MCP Chatbot")
-        print("=" * 55)
-        print("Conectado a Claude (Anthropic)")
-        print("Funcionalidades activas:")
-        print("1. Conexión con LLM")
-        print("2. Mantenimiento de contexto")
-        print("3. Logging de interacciones")
-        print("\nComandos especiales:")
-        print("  /stats  - Ver estadísticas")
-        print("  /logs   - Ver logs recientes")
-        print("  /quit   - Salir")
-        print("=" * 55)
-        
+
+    async def run_chat(self):
+        """Ejecutar el chat"""
+        print("Inicia la conversación escribiendo tu mensaje.")
+        print("\nComandos especiales disponibles:")
+        print("  /logs     - Ver logs recientes")
+        print("  /tools    - Ver herramientas MCP disponibles")
+        print("  /quit     - Salir del chatbot")
+        print("=" * 60)
+
+        # Inicializar servidores MCP silenciosamente
+        await self.initialize_mcp_servers()
+
         while True:
             try:
-                user_input = input("\n Tú: ").strip()
+                user_input = input("\nTú: ").strip()
                 
                 if not user_input:
                     continue
-                
-                # Comandos especiales
+                    
                 if user_input.lower() == '/quit':
-                    print("\n ¡Hasta luego!")
+                    print("¡Hasta luego!")
                     break
-                elif user_input.lower() == '/stats':
-                    self.show_conversation_stats()
-                    continue
                 elif user_input.lower() == '/logs':
                     self.show_recent_logs()
                     continue
+                elif user_input.lower() == '/tools':
+                    print(self.get_available_tools_info())
+                    continue
                 
-                # Enviar mensaje a Claude
-                print("\n🤖 Claude: ", end="")
-                response = self.send_message(user_input)
+                print("\nClaude: ", end="", flush=True)
+                response = await self.process_query(user_input)
                 print(response)
                 
             except KeyboardInterrupt:
-                print("\n\n ¡Hasta luego!")
+                print("\n¡Hasta luego!")
                 break
             except Exception as e:
-                print(f"\n Error: {e}")
+                print(f"\nError: {e}")
+
+    def run(self):
+        """Método principal"""
+        asyncio.run(self.run_chat())
 
 
 if __name__ == "__main__":
@@ -199,9 +309,7 @@ if __name__ == "__main__":
         chatbot = MCPChatbot()
         chatbot.run()
     except ValueError as e:
-        print(f" Error de configuración: {e}")
-        print("\n Asegúrate de:")
-        print("1. Tener un archivo .env con ANTHROPIC_API_KEY=tu-api-key")
-        print("2. Instalar las dependencias: pip install anthropic python-dotenv")
+        print(f"Error de configuración: {e}")
+        print("\nAsegúrate de tener un archivo .env con ANTHROPIC_API_KEY=tu-api-key")
     except Exception as e:
-        print(f" Error inesperado: {e}")
+        print(f"Error inesperado: {e}")
