@@ -85,14 +85,25 @@ class F1DataAnalyzer:
                 "driver_number": driver_number
             })
             
-            driver_info = drivers_data[0] if drivers_data else {}
-            driver_name = f"{driver_info.get('first_name', '')} {driver_info.get('last_name', '')}"
+            # Validaciones iniciales
+            if not drivers_data:
+                return {"error": f"No se encontró información del piloto {driver_number} en la sesión {session_key}"}
+            
+            if not laps_data:
+                return {"error": f"No se encontraron datos de vueltas para el piloto {driver_number} en la sesión {session_key}"}
+            
+            driver_info = drivers_data[0]
+            driver_name = f"{driver_info.get('first_name', 'Unknown')} {driver_info.get('last_name', 'Driver')}"
+            
+            # Si no hay datos de stints, intentar análisis básico por laps
+            if not stints_data:
+                return await self._analyze_from_laps_only(session_key, driver_number, driver_name, laps_data)
             
             # Analizar cada stint
             stints_analysis = []
             for stint in stints_data:
-                stint_laps = [lap for lap in laps_data 
-                             if stint["stint_number"] == lap.get("stint_number")]
+                # Método más robusto para encontrar laps del stint
+                stint_laps = self._get_stint_laps(stint, laps_data)
                 
                 if not stint_laps:
                     continue
@@ -101,20 +112,24 @@ class F1DataAnalyzer:
                 lap_times = [lap["lap_duration"] for lap in stint_laps 
                             if lap.get("lap_duration") and lap["lap_duration"] > 0]
                 
-                if len(lap_times) < 2:
+                if len(lap_times) < 1:  # Cambiar de 2 a 1 para ser menos restrictivo
                     continue
                 
                 avg_time = statistics.mean(lap_times)
                 stint_analysis = TireStint(
                     compound=stint.get("compound", "Unknown"),
-                    start_lap=min(lap["lap_number"] for lap in stint_laps),
-                    end_lap=max(lap["lap_number"] for lap in stint_laps),
+                    start_lap=stint.get("lap_start", min(lap.get("lap_number", 0) for lap in stint_laps)),
+                    end_lap=stint.get("lap_end", max(lap.get("lap_number", 0) for lap in stint_laps)),
                     laps_count=len(stint_laps),
                     avg_lap_time=avg_time,
                     degradation_per_lap=self._calculate_degradation(lap_times),
                     stint_time=sum(lap_times)
                 )
                 stints_analysis.append(stint_analysis)
+            
+            # Si no se procesaron stints válidos, intentar análisis alternativo
+            if not stints_analysis:
+                return await self._analyze_from_laps_only(session_key, driver_number, driver_name, laps_data)
             
             return {
                 "driver_name": driver_name,
@@ -131,11 +146,138 @@ class F1DataAnalyzer:
                         "total_time": round(stint.stint_time, 3)
                     } for stint in stints_analysis
                 ],
-                "total_pit_stops": len(stints_analysis) - 1,
+                "total_pit_stops": max(0, len(stints_analysis) - 1),
                 "strategy_effectiveness": "Análisis completado"
             }
         except Exception as e:
             return {"error": f"Error analizando estrategia: {str(e)}"}
+    
+    def _get_stint_laps(self, stint, laps_data):
+        """Método más robusto para obtener laps de un stint"""
+        stint_number = stint.get("stint_number")
+        lap_start = stint.get("lap_start")
+        lap_end = stint.get("lap_end")
+        
+        # Método 1: Por stint_number
+        if stint_number is not None:
+            laps = [lap for lap in laps_data if lap.get("stint_number") == stint_number]
+            if laps:
+                return laps
+        
+        # Método 2: Por rango de vueltas
+        if lap_start is not None and lap_end is not None:
+            laps = [lap for lap in laps_data 
+                   if lap.get("lap_number") and lap_start <= lap["lap_number"] <= lap_end]
+            if laps:
+                return laps
+        
+        # Método 3: Fallback - intentar por posición en la lista
+        try:
+            stint_index = next(i for i, s in enumerate(stint.get("session_stints", [])) if s == stint)
+            total_stints = len(stint.get("session_stints", []))
+            laps_per_stint = len(laps_data) // total_stints if total_stints > 0 else len(laps_data)
+            start_idx = stint_index * laps_per_stint
+            end_idx = (stint_index + 1) * laps_per_stint
+            return laps_data[start_idx:end_idx]
+        except:
+            pass
+        
+        return []
+    
+    async def _analyze_from_laps_only(self, session_key: int, driver_number: int, driver_name: str, laps_data: List[Dict]) -> Dict[str, Any]:
+        """Análisis básico cuando no hay datos de stints disponibles"""
+        
+        # Análisis básico de todas las vueltas
+        all_valid_times = [lap["lap_duration"] for lap in laps_data 
+                          if lap.get("lap_duration") and lap["lap_duration"] > 0]
+        
+        if not all_valid_times:
+            return {"error": "No se encontraron tiempos de vuelta válidos"}
+        
+        # Intentar detectar cambios de neumáticos por cambios significativos en tiempo
+        stints = self._detect_stints_from_lap_times(laps_data)
+        
+        if len(stints) <= 1:
+            # Un solo stint - análisis simple
+            lap_numbers = [lap.get("lap_number", i+1) for i, lap in enumerate(laps_data) if lap.get("lap_duration")]
+            
+            return {
+                "driver_name": driver_name,
+                "driver_number": driver_number,
+                "session_key": session_key,
+                "stints": [{
+                    "compound": "Desconocido",
+                    "start_lap": min(lap_numbers) if lap_numbers else 1,
+                    "end_lap": max(lap_numbers) if lap_numbers else len(laps_data),
+                    "laps_count": len(all_valid_times),
+                    "avg_lap_time": round(statistics.mean(all_valid_times), 3),
+                    "degradation_per_lap": round(self._calculate_degradation(all_valid_times), 4),
+                    "total_time": round(sum(all_valid_times), 3)
+                }],
+                "total_pit_stops": 0,
+                "strategy_effectiveness": "Análisis básico - sin datos de stints",
+                "note": "Datos limitados: análisis basado solo en tiempos de vuelta"
+            }
+        
+        # Múltiples stints detectados
+        stint_results = []
+        for i, stint_laps in enumerate(stints):
+            valid_times = [lap["lap_duration"] for lap in stint_laps 
+                          if lap.get("lap_duration") and lap["lap_duration"] > 0]
+            
+            if valid_times:
+                lap_numbers = [lap.get("lap_number", 0) for lap in stint_laps if lap.get("lap_number")]
+                stint_results.append({
+                    "compound": f"Stint {i+1}",
+                    "start_lap": min(lap_numbers) if lap_numbers else 1,
+                    "end_lap": max(lap_numbers) if lap_numbers else len(stint_laps),
+                    "laps_count": len(valid_times),
+                    "avg_lap_time": round(statistics.mean(valid_times), 3),
+                    "degradation_per_lap": round(self._calculate_degradation(valid_times), 4),
+                    "total_time": round(sum(valid_times), 3)
+                })
+        
+        return {
+            "driver_name": driver_name,
+            "driver_number": driver_number,
+            "session_key": session_key,
+            "stints": stint_results,
+            "total_pit_stops": max(0, len(stint_results) - 1),
+            "strategy_effectiveness": "Análisis estimado - stints detectados por cambios de tiempo",
+            "note": "Stints estimados basados en patrones de tiempos de vuelta"
+        }
+    
+    def _detect_stints_from_lap_times(self, laps_data: List[Dict]) -> List[List[Dict]]:
+        """Detectar posibles stints basándose en cambios significativos en los tiempos"""
+        if len(laps_data) < 3:
+            return [laps_data]
+        
+        valid_laps = [lap for lap in laps_data if lap.get("lap_duration") and lap["lap_duration"] > 0]
+        
+        if len(valid_laps) < 3:
+            return [laps_data]
+        
+        stints = []
+        current_stint = [valid_laps[0]]
+        
+        for i in range(1, len(valid_laps)):
+            current_time = valid_laps[i]["lap_duration"]
+            prev_time = valid_laps[i-1]["lap_duration"]
+            
+            # Si hay una mejora significativa (más de 3 segundos), probablemente es un nuevo stint
+            if prev_time - current_time > 3.0:
+                stints.append(current_stint)
+                current_stint = [valid_laps[i]]
+            else:
+                current_stint.append(valid_laps[i])
+        
+        stints.append(current_stint)
+        
+        # Si solo detectamos un stint, devolver todos los laps
+        if len(stints) <= 1:
+            return [laps_data]
+        
+        return stints
     
     def _calculate_degradation(self, lap_times: List[float]) -> float:
         if len(lap_times) < 3:
@@ -148,7 +290,11 @@ class F1DataAnalyzer:
             xy_sum = sum(i * time for i, time in enumerate(lap_times))
             x2_sum = sum(i * i for i in range(n))
             
-            slope = (n * xy_sum - x_sum * y_sum) / (n * x2_sum - x_sum * x_sum)
+            denominator = n * x2_sum - x_sum * x_sum
+            if denominator == 0:
+                return 0.0
+                
+            slope = (n * xy_sum - x_sum * y_sum) / denominator
             return slope
         except:
             return 0.0
@@ -158,11 +304,14 @@ class F1DataAnalyzer:
         try:
             drivers = await self.get_data("drivers", {"session_key": session_key})
             
+            if not drivers:
+                return {"error": f"No se encontraron pilotos en la sesión {session_key}. Verifica que el session_key sea válido."}
+            
             drivers_info = []
             for driver in sorted(drivers, key=lambda x: x.get("driver_number", 0)):
                 drivers_info.append({
                     "number": driver.get('driver_number', 'N/A'),
-                    "name": f"{driver.get('first_name', '')} {driver.get('last_name', '')}",
+                    "name": f"{driver.get('first_name', '')} {driver.get('last_name', '')}".strip(),
                     "team": driver.get('team_name', 'N/A'),
                     "acronym": driver.get('name_acronym', 'N/A')
                 })
@@ -180,8 +329,17 @@ class F1DataAnalyzer:
         try:
             sessions = await self.get_data("sessions", {"year": year})
             
+            if not sessions:
+                return {"error": f"No se encontraron sesiones para el año {year}. Verifica que el año sea válido."}
+            
             if location:
-                sessions = [s for s in sessions if location.lower() in s.get("location", "").lower()]
+                filtered_sessions = [s for s in sessions if location.lower() in s.get("location", "").lower()]
+                if not filtered_sessions:
+                    available_locations = list(set(s.get("location", "Unknown") for s in sessions))
+                    return {
+                        "error": f"No se encontraron sesiones para '{location}' en {year}. Ubicaciones disponibles: {', '.join(available_locations[:10])}"
+                    }
+                sessions = filtered_sessions
             
             sessions_info = []
             for session in sessions:
@@ -292,6 +450,11 @@ Stint {i} - {stint['compound']}:
 """
                 
                 output += f"\nPARADAS EN BOXES: {result['total_pit_stops']}"
+                
+                # Agregar notas informativas si existen
+                if result.get('note'):
+                    output += f"\nNOTA: {result['note']}"
+                
                 return [TextContent(type="text", text=output)]
             
             elif name == "get_driver_info":
@@ -349,9 +512,9 @@ def main():
     try:
         asyncio.run(run_mcp_server())
     except KeyboardInterrupt:
-        print("\n✅ Servidor F1 terminado correctamente", file=sys.stderr)
+        print("\n Servidor F1 terminado correctamente", file=sys.stderr)
     except Exception as e:
-        print(f"❌ Error en servidor F1: {e}", file=sys.stderr)
+        print(f" Error en servidor F1: {e}", file=sys.stderr)
         traceback.print_exc()
         sys.exit(1)
 

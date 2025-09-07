@@ -317,24 +317,23 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
         examples = """
 🏎️  EJEMPLOS DE ANÁLISIS DE FÓRMULA 1:
 
-1. Análizar estrategia de neumáticos:
-   "Analiza la estrategia de neumáticos de Verstappen en la sesión 9158"
+1. Pregunta sobre los pilotos que participaron
+   "¿Qué pilotos corrieron en la carrera de Singapur?"
 
-2. Comparar pit stops:
-   "Compara el timing de pit stops entre los pilotos 1, 44 y 16 en la sesión 9158"
+2. Sesiones disponibles:
+   "Muestra las sesiones de Spa en 2023"
 
-3. Encontrar ventanas óptimas:
-   "Encuentra las mejores ventanas para pit stops en la sesión 9158"
+3. Busqueda por año
+   "¿Qué sesiones hubo en 2024?"
 
-4. Obtener información de sesiones:
-   "Muéstrame todas las sesiones de 2024"
-   "Busca sesiones de Mónaco en 2024"
+4. Preguntas Descriptivas:
+   "Lista completa de pilotos y equipos"
 
-5. Ver pilotos de una sesión:
-   "¿Qué pilotos participaron en la sesión 9158?"
+5. Comparaciones
+   "Analiza la estrategia de Hamilton en la sesión 9158, luego la de Verstappen en la misma sesión"
 
 📋 NOTAS:
-   - Usa session_key (números como 9158, 9159, etc.)
+   - Usa session_key (números como 9158, 9159, etc.) Tambien puedes especificar Año y Nombre de la Sesion
    - Los números de piloto son estándar (ej: 1=Verstappen, 44=Hamilton, 16=Leclerc)
    - Puedes combinar múltiples análisis en una sola consulta
 """
