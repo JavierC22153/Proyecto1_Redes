@@ -1,4 +1,7 @@
-anthropic>=0.40.0
+# Dependencias principales
+anthropic>=0.18.0
 python-dotenv>=1.0.0
+aiohttp>=3.8.0
+
+# MCP (Model Context Protocol)
 mcp>=1.0.0
-mcp-server-git>=2025.7.1

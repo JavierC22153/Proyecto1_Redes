@@ -30,13 +30,11 @@ class MCPChatbot:
         self.available_tools = {}
 
     def setup_logging(self):
-        """Configurar el archivo de log"""
         if not os.path.exists(self.log_file):
             with open(self.log_file, 'w', encoding='utf-8') as f:
                 f.write(f"=== MCP Chatbot Log - Iniciado: {datetime.now().isoformat()} ===\n")
 
     def log_interaction(self, interaction_type: str, content: str, response: Any = None):
-        """Registrar interacciones en el log"""
         timestamp = datetime.now().isoformat()
         log_entry = {
             "timestamp": timestamp,
@@ -51,7 +49,6 @@ class MCPChatbot:
             f.write(f"{json.dumps(log_entry, ensure_ascii=False)}\n")
 
     async def connect_to_server(self, server_name: str, server_params: StdioServerParameters):
-        """Conectar a un servidor MCP"""
         try:
             async with asyncio.timeout(10):
                 async with stdio_client(server_params) as (read, write):
@@ -76,26 +73,61 @@ class MCPChatbot:
                         
         except Exception as e:
             self.log_interaction("MCP_ERROR", server_name, {"error": str(e)})
+            print(f"Advertencia: No se pudo conectar al servidor {server_name}: {e}")
             return False
 
     async def initialize_mcp_servers(self):
-        """Inicializar servidores MCP"""
+        print("Inicializando servidores MCP...")
+        
         # Servidor filesystem
-        filesystem_params = StdioServerParameters(
-            command="npx",
-            args=["-y", "@modelcontextprotocol/server-filesystem", os.getcwd()]
-        )
-        await self.connect_to_server("filesystem", filesystem_params)
+        try:
+            filesystem_params = StdioServerParameters(
+                command="npx",
+                args=["-y", "@modelcontextprotocol/server-filesystem", os.getcwd()]
+            )
+            await self.connect_to_server("filesystem", filesystem_params)
+            print("✓ Servidor filesystem conectado")
+        except Exception as e:
+            print(f"⚠ Servidor filesystem no disponible: {e}")
         
         # Servidor git
-        git_params = StdioServerParameters(
-            command=sys.executable,
-            args=["-m", "mcp_server_git", "--repository", os.getcwd()]
-        )
-        await self.connect_to_server("git", git_params)
+        try:
+            git_params = StdioServerParameters(
+                command=sys.executable,
+                args=["-m", "mcp_server_git", "--repository", os.getcwd()]
+            )
+            await self.connect_to_server("git", git_params)
+            print("✓ Servidor git conectado")
+        except Exception as e:
+            print(f"⚠ Servidor git no disponible: {e}")
+        
+        # Servidor F1 personalizado
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            f1_server_path = os.path.join(current_dir, "f1_mcp_server.py")
+            print(f"🔍 Buscando servidor F1 en: {f1_server_path}")
+            
+            if os.path.exists(f1_server_path):
+                f1_params = StdioServerParameters(
+                    command=sys.executable,
+                    args=[f1_server_path]
+                )
+                success = await self.connect_to_server("f1_analyzer", f1_params)
+                if success:
+                    print(" Servidor F1 Strategy Analyzer conectado")
+                else:
+                    print(" Error conectando servidor F1")
+            else:
+                print(f" Archivo f1_mcp_server.py no encontrado en: {f1_server_path}")
+                print(" Asegúrate de crear el archivo f1_mcp_server.py en el mismo directorio")
+        except Exception as e:
+            print(f" Servidor F1 no disponible: {e}")
+            import traceback
+            print(f" Traceback: {traceback.format_exc()}")
+        
+        print(f"Total de herramientas disponibles: {len(self.available_tools)}\n")
 
     async def execute_mcp_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any]):
-        """Ejecutar una herramienta MCP"""
         try:
             if server_name not in self.mcp_sessions:
                 return f"Servidor {server_name} no disponible"
@@ -125,47 +157,69 @@ class MCPChatbot:
             return error_msg
 
     def add_to_context(self, role: str, content: str):
-        """Agregar mensaje al contexto de conversación"""
         self.conversation_history.append({"role": role, "content": content})
         if len(self.conversation_history) > 20:  # Mantener solo los últimos 20 mensajes
             self.conversation_history = self.conversation_history[-20:]
 
     def get_available_tools_info(self) -> str:
-        """Obtener información de herramientas disponibles"""
         if not self.available_tools:
             return "No hay herramientas MCP disponibles."
         
         info = "Herramientas MCP disponibles:\n\n"
+        
+        # Agrupar por servidor
+        servers = {}
         for tool_key, tool_info in self.available_tools.items():
-            tool = tool_info['tool']
             server = tool_info['server']
-            info += f"• {tool.name} ({server}): {tool.description}\n"
+            if server not in servers:
+                servers[server] = []
+            servers[server].append(tool_info['tool'])
+        
+        for server_name, tools in servers.items():
+            info += f"📁 {server_name.upper()}:\n"
+            for tool in tools:
+                info += f"  • {tool.name}: {tool.description}\n"
+            info += "\n"
         
         return info
 
     def create_system_prompt(self) -> str:
-        """Crear prompt del sistema"""
-        base_prompt = """Eres un asistente AI con acceso a herramientas MCP para manipular archivos y repositorios Git.
+        base_prompt = """Eres un asistente AI especializado con acceso a herramientas MCP avanzadas.
 
-Puedes ayudar con tareas como:
-- Leer y escribir archivos
-- Listar directorios
-- Operaciones de Git (commits, branches, etc.)
-- Buscar archivos y contenido
+Puedes ayudar con:
+- 🏎️ ANÁLISIS DE FÓRMULA 1: Estrategias de carrera, análisis de neumáticos, timing de pit stops
+- 📁 MANIPULACIÓN DE ARCHIVOS: Leer, escribir, buscar archivos y directorios
+- 🔧 OPERACIONES DE GIT: Commits, branches, historial, estado del repositorio
 
-Responde de manera directa y concisa. Cuando uses herramientas, explica qué estás haciendo."""
+CAPACIDADES ESPECIALES DE F1:
+- Analizar estrategias de neumáticos de cualquier piloto
+- Comparar timing de pit stops entre pilotos
+- Encontrar ventanas óptimas para paradas estratégicas
+- Obtener información de sesiones y pilotos
+
+Responde de manera directa, técnica cuando sea necesario, y siempre explica qué herramientas estás usando y por qué."""
         
         if self.available_tools:
-            tools_info = "\n\nHerramientas disponibles:\n"
+            tools_info = "\n\nHERRAMIENTAS DISPONIBLES:\n"
+            
+            # Mostrar herramientas agrupadas por servidor
+            servers = {}
             for tool_key, tool_info in self.available_tools.items():
-                tool = tool_info['tool']
-                tools_info += f"- {tool.name}: {tool.description}\n"
+                server = tool_info['server']
+                if server not in servers:
+                    servers[server] = []
+                servers[server].append(tool_info['tool'])
+            
+            for server_name, tools in servers.items():
+                tools_info += f"\n{server_name.upper()}:\n"
+                for tool in tools:
+                    tools_info += f"  - {tool.name}: {tool.description}\n"
+            
             base_prompt += tools_info
             
         return base_prompt
 
     async def handle_tool_calls(self, response):
-        """Manejar llamadas a herramientas de Claude"""
         assistant_response = ""
         
         for content in response.content:
@@ -183,15 +237,15 @@ Responde de manera directa y concisa. Cuando uses herramientas, explica qué est
                         break
                 
                 if server_name:
+                    print(f"\n Ejecutando {tool_name} en servidor {server_name}...")
                     result = await self.execute_mcp_tool(server_name, tool_name, arguments)
-                    assistant_response += f"\n\nResultado de {tool_name}:\n{result}\n"
+                    assistant_response += f"\n\n{result}\n"
                 else:
-                    assistant_response += f"\nHerramienta {tool_name} no encontrada.\n"
+                    assistant_response += f"\n❌ Herramienta {tool_name} no encontrada.\n"
                     
         return assistant_response
 
     async def process_query(self, user_input: str) -> str:
-        """Procesar consulta del usuario"""
         try:
             self.add_to_context("user", user_input)
             self.log_interaction("USER_QUERY", user_input)
@@ -209,7 +263,7 @@ Responde de manera directa y concisa. Cuando uses herramientas, explica qué est
             # Llamar a Claude
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=1500,
+                max_tokens=2000,
                 system=self.create_system_prompt(),
                 messages=self.conversation_history,
                 tools=tools if tools else None
@@ -229,9 +283,8 @@ Responde de manera directa y concisa. Cuando uses herramientas, explica qué est
             return error_msg
 
     def show_recent_logs(self, limit: int = 5):
-        """Mostrar logs recientes"""
         print(f"\nÚltimas {limit} interacciones:")
-        print("-" * 60)
+        print("-" * 80)
         
         try:
             with open(self.log_file, 'r', encoding='utf-8') as f:
@@ -255,32 +308,62 @@ Responde de manera directa y concisa. Cuando uses herramientas, explica qué est
                 timestamp = entry.get('timestamp', 'N/A')
                 entry_type = entry.get('type', 'N/A')
                 content = entry.get('content', 'N/A')
-                print(f"[{timestamp}] {entry_type}: {content[:80]}...")
+                print(f"[{timestamp}] {entry_type}: {content[:100]}...")
                 
         except Exception as e:
             print(f"Error al leer logs: {e}")
 
-    async def run_chat(self):
-        """Ejecutar el chat"""
-        print("Inicia la conversación escribiendo tu mensaje.")
-        print("\nComandos especiales disponibles:")
-        print("  /logs     - Ver logs recientes")
-        print("  /tools    - Ver herramientas MCP disponibles")
-        print("  /quit     - Salir del chatbot")
-        print("=" * 60)
+    def show_f1_examples(self):
+        examples = """
+🏎️  EJEMPLOS DE ANÁLISIS DE FÓRMULA 1:
 
-        # Inicializar servidores MCP silenciosamente
+1. Análizar estrategia de neumáticos:
+   "Analiza la estrategia de neumáticos de Verstappen en la sesión 9158"
+
+2. Comparar pit stops:
+   "Compara el timing de pit stops entre los pilotos 1, 44 y 16 en la sesión 9158"
+
+3. Encontrar ventanas óptimas:
+   "Encuentra las mejores ventanas para pit stops en la sesión 9158"
+
+4. Obtener información de sesiones:
+   "Muéstrame todas las sesiones de 2024"
+   "Busca sesiones de Mónaco en 2024"
+
+5. Ver pilotos de una sesión:
+   "¿Qué pilotos participaron en la sesión 9158?"
+
+📋 NOTAS:
+   - Usa session_key (números como 9158, 9159, etc.)
+   - Los números de piloto son estándar (ej: 1=Verstappen, 44=Hamilton, 16=Leclerc)
+   - Puedes combinar múltiples análisis en una sola consulta
+"""
+        print(examples)
+
+    async def run_chat(self):
+        print("CHATBOT F1 + MCP - Análisis Avanzado de Fórmula 1")
+        print("=" * 80)
+        
+        # Inicializar servidores MCP
         await self.initialize_mcp_servers()
+        
+        print("💬 Inicia la conversación escribiendo tu mensaje.")
+        print("\n🔧 Comandos especiales disponibles:")
+        print("  /logs     - Ver logs recientes")
+        print("  /tools    - Ver herramientas MCP disponibles")  
+        print("  /f1       - Ver ejemplos de análisis F1")
+        print("  /quit     - Salir del chatbot")
+        print("=" * 80)
 
         while True:
             try:
-                user_input = input("\nTú: ").strip()
+                user_input = input("\n🔵 Tú: ").strip()
                 
                 if not user_input:
                     continue
                     
                 if user_input.lower() == '/quit':
-                    print("¡Hasta luego!")
+                    print("🏁 ¡Hasta luego!")
                     break
                 elif user_input.lower() == '/logs':
                     self.show_recent_logs()
@@ -288,16 +371,19 @@ Responde de manera directa y concisa. Cuando uses herramientas, explica qué est
                 elif user_input.lower() == '/tools':
                     print(self.get_available_tools_info())
                     continue
+                elif user_input.lower() == '/f1':
+                    self.show_f1_examples()
+                    continue
                 
-                print("\nClaude: ", end="", flush=True)
+                print("\n🤖 Claude: ", end="", flush=True)
                 response = await self.process_query(user_input)
                 print(response)
                 
             except KeyboardInterrupt:
-                print("\n¡Hasta luego!")
+                print("\n🏁 ¡Hasta luego!")
                 break
             except Exception as e:
-                print(f"\nError: {e}")
+                print(f"\n Error: {e}")
 
     def run(self):
         """Método principal"""
@@ -309,7 +395,7 @@ if __name__ == "__main__":
         chatbot = MCPChatbot()
         chatbot.run()
     except ValueError as e:
-        print(f"Error de configuración: {e}")
-        print("\nAsegúrate de tener un archivo .env con ANTHROPIC_API_KEY=tu-api-key")
+        print(f" Error de configuración: {e}")
+        print("\n📋 Asegúrate de tener un archivo .env con ANTHROPIC_API_KEY=tu-api-key")
     except Exception as e:
-        print(f"Error inesperado: {e}")
+        print(f" Error inesperado: {e}")
