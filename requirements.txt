@@ -2,6 +2,7 @@
 anthropic>=0.18.0
 python-dotenv>=1.0.0
 aiohttp>=3.8.0
+requests>=2.31.0
 
 # MCP (Model Context Protocol)
 mcp>=1.0.0

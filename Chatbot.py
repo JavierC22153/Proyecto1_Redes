@@ -50,7 +50,7 @@ class MCPChatbot:
 
     async def connect_to_server(self, server_name: str, server_params: StdioServerParameters):
         try:
-            async with asyncio.timeout(10):
+            async with asyncio.timeout(15):  # Aumentado a 15s por si LoL server necesita más tiempo
                 async with stdio_client(server_params) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
@@ -97,9 +97,9 @@ class MCPChatbot:
                 args=["-m", "mcp_server_git", "--repository", os.getcwd()]
             )
             await self.connect_to_server("git", git_params)
-            print("✓ Servidor git conectado")
+            print(" Servidor git conectado")
         except Exception as e:
-            print(f"⚠ Servidor git no disponible: {e}")
+            print(f" Servidor git no disponible: {e}")
         
         # Servidor F1 personalizado
         try:
@@ -114,14 +114,35 @@ class MCPChatbot:
                 )
                 success = await self.connect_to_server("f1_analyzer", f1_params)
                 if success:
-                    print(" Servidor F1 Strategy Analyzer conectado")
+                    print("🏎️ Servidor F1 Strategy Analyzer conectado")
                 else:
-                    print(" Error conectando servidor F1")
+                    print("⚠ Error conectando servidor F1")
             else:
-                print(f" Archivo f1_mcp_server.py no encontrado en: {f1_server_path}")
-                print(" Asegúrate de crear el archivo f1_mcp_server.py en el mismo directorio")
+                print(f"⚠ Archivo f1_mcp_server.py no encontrado en: {f1_server_path}")
         except Exception as e:
-            print(f" Servidor F1 no disponible: {e}")
+            print(f"⚠ Servidor F1 no disponible: {e}")
+        
+        # Servidor League of Legends personalizado
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            lol_server_path = os.path.join(current_dir, "lol_mcp_server.py")
+            print(f"🔍 Buscando servidor LoL en: {lol_server_path}")
+            
+            if os.path.exists(lol_server_path):
+                lol_params = StdioServerParameters(
+                    command=sys.executable,
+                    args=[lol_server_path]
+                )
+                success = await self.connect_to_server("lol_advisor", lol_params)
+                if success:
+                    print("🎮 Servidor LoL Build Advisor conectado")
+                else:
+                    print(" Error conectando servidor LoL")
+            else:
+                print(f" Archivo lol_mcp_server.py no encontrado en: {lol_server_path}")
+                print(" Asegúrate de crear el archivo lol_mcp_server.py y la carpeta lol_modules/")
+        except Exception as e:
+            print(f" Servidor LoL no disponible: {e}")
             import traceback
             print(f" Traceback: {traceback.format_exc()}")
         
@@ -176,7 +197,15 @@ class MCPChatbot:
             servers[server].append(tool_info['tool'])
         
         for server_name, tools in servers.items():
-            info += f"📁 {server_name.upper()}:\n"
+            # Iconos por servidor
+            icon = {
+                'filesystem': '📁',
+                'git': '🔧',
+                'f1_analyzer': '🏎️',
+                'lol_advisor': '🎮'
+            }.get(server_name, '⚙️')
+            
+            info += f"{icon} {server_name.upper()}:\n"
             for tool in tools:
                 info += f"  • {tool.name}: {tool.description}\n"
             info += "\n"
@@ -188,14 +217,23 @@ class MCPChatbot:
 
 Puedes ayudar con:
 - 🏎️ ANÁLISIS DE FÓRMULA 1: Estrategias de carrera, análisis de neumáticos, timing de pit stops
+- 🎮 LEAGUE OF LEGENDS: Builds de campeones, runas, items, análisis de composiciones
 - 📁 MANIPULACIÓN DE ARCHIVOS: Leer, escribir, buscar archivos y directorios
 - 🔧 OPERACIONES DE GIT: Commits, branches, historial, estado del repositorio
 
-CAPACIDADES ESPECIALES DE F1:
+CAPACIDADES ESPECIALES:
+
+F1 Analysis:
 - Analizar estrategias de neumáticos de cualquier piloto
 - Comparar timing de pit stops entre pilotos
 - Encontrar ventanas óptimas para paradas estratégicas
 - Obtener información de sesiones y pilotos
+
+League of Legends:
+- Configurar matchups usando texto libre (ej: "Quiero jugar Darius tank contra Garen, Maokai, Ahri, Jinx, Lulu")
+- Analizar composiciones enemigas (damage mix, CC, healing)
+- Sugerir runas optimizadas según el matchup
+- Recomendar builds de items y hechizos de invocador
 
 Responde de manera directa, técnica cuando sea necesario, y siempre explica qué herramientas estás usando y por qué."""
         
@@ -211,7 +249,14 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
                 servers[server].append(tool_info['tool'])
             
             for server_name, tools in servers.items():
-                tools_info += f"\n{server_name.upper()}:\n"
+                icon = {
+                    'filesystem': '📁',
+                    'git': '🔧', 
+                    'f1_analyzer': '🏎️',
+                    'lol_advisor': '🎮'
+                }.get(server_name, '⚙️')
+                
+                tools_info += f"\n{icon} {server_name.upper()}:\n"
                 for tool in tools:
                     tools_info += f"  - {tool.name}: {tool.description}\n"
             
@@ -237,11 +282,19 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
                         break
                 
                 if server_name:
-                    print(f"\n Ejecutando {tool_name} en servidor {server_name}...")
+                    # Iconos para diferentes tipos de herramientas
+                    icon = {
+                        'f1_analyzer': '🏎️',
+                        'lol_advisor': '🎮',
+                        'filesystem': '📁',
+                        'git': '🔧'
+                    }.get(server_name, '⚙️')
+                    
+                    print(f"\n{icon} Ejecutando {tool_name} en servidor {server_name}...")
                     result = await self.execute_mcp_tool(server_name, tool_name, arguments)
                     assistant_response += f"\n\n{result}\n"
                 else:
-                    assistant_response += f"\n❌ Herramienta {tool_name} no encontrada.\n"
+                    assistant_response += f"\n Herramienta {tool_name} no encontrada.\n"
                     
         return assistant_response
 
@@ -315,7 +368,7 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
 
     def show_f1_examples(self):
         examples = """
-🏎️  EJEMPLOS DE ANÁLISIS DE FÓRMULA 1:
+  EJEMPLOS DE ANÁLISIS DE FÓRMULA 1:
 
 1. Pregunta sobre los pilotos que participaron
    "¿Qué pilotos corrieron en la carrera de Singapur?"
@@ -332,25 +385,55 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
 5. Comparaciones
    "Analiza la estrategia de Hamilton en la sesión 9158, luego la de Verstappen en la misma sesión"
 
-📋 NOTAS:
-   - Usa session_key (números como 9158, 9159, etc.) Tambien puedes especificar Año y Nombre de la Sesion
+ NOTAS:
+   - Usa session_key (números como 9158, 9159, etc.) También puedes especificar Año y Nombre de la Sesión
    - Los números de piloto son estándar (ej: 1=Verstappen, 44=Hamilton, 16=Leclerc)
    - Puedes combinar múltiples análisis en una sola consulta
 """
         print(examples)
 
+    def show_lol_examples(self):
+        examples = """
+  EJEMPLOS DE LEAGUE OF LEGENDS:
+
+1. Configurar matchup con texto libre:
+   "Quiero jugar Darius tank contra Garen, Maokai, Ahri, Jinx, Lulu"
+
+2. Análisis paso a paso:
+   - Primero: "Configura un matchup con Yasuo AD contra Malphite, Graves, LeBlanc, Kai'Sa, Thresh"
+   - Luego: "Analiza la composición enemiga"
+   - Después: "Sugiere runas para este matchup"
+
+3. Builds completos:
+   "Dame el build completo de Jinx ADC contra un equipo tanque"
+
+4. Consultas específicas:
+   "¿Qué runas usar con Azir AP contra mucho CC?"
+   "Items para Garen tank vs equipo full AD"
+
+📋 FUNCIONALIDADES:
+   - ✅ Parser de texto libre (funciona sin configuración)
+   - ✅ Análisis automático de composiciones
+   - ✅ Sugerencias de runas adaptativas
+   - ✅ Builds de items situacionales
+   - ✅ Hechizos de invocador optimizados
+
+ CONSEJO: Puedes usar texto natural como "Jugar X contra Y, Z, W..."
+"""
+        print(examples)
+
     async def run_chat(self):
-        print("CHATBOT F1 + MCP - Análisis Avanzado de Fórmula 1")
         print("=" * 80)
         
         # Inicializar servidores MCP
         await self.initialize_mcp_servers()
         
-        print("💬 Inicia la conversación escribiendo tu mensaje.")
+        print(" Inicia la conversación escribiendo tu mensaje.")
         print("\n🔧 Comandos especiales disponibles:")
         print("  /logs     - Ver logs recientes")
         print("  /tools    - Ver herramientas MCP disponibles")  
         print("  /f1       - Ver ejemplos de análisis F1")
+        print("  /lol      - Ver ejemplos de League of Legends")
         print("  /quit     - Salir del chatbot")
         print("=" * 80)
 
@@ -362,7 +445,7 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
                     continue
                     
                 if user_input.lower() == '/quit':
-                    print("🏁 ¡Hasta luego!")
+                    print(" ¡Hasta luego!")
                     break
                 elif user_input.lower() == '/logs':
                     self.show_recent_logs()
@@ -373,13 +456,16 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
                 elif user_input.lower() == '/f1':
                     self.show_f1_examples()
                     continue
+                elif user_input.lower() == '/lol':
+                    self.show_lol_examples()
+                    continue
                 
                 print("\n🤖 Claude: ", end="", flush=True)
                 response = await self.process_query(user_input)
                 print(response)
                 
             except KeyboardInterrupt:
-                print("\n🏁 ¡Hasta luego!")
+                print("\n ¡Hasta luego!")
                 break
             except Exception as e:
                 print(f"\n Error: {e}")
@@ -394,7 +480,7 @@ if __name__ == "__main__":
         chatbot = MCPChatbot()
         chatbot.run()
     except ValueError as e:
-        print(f" Error de configuración: {e}")
-        print("\n📋 Asegúrate de tener un archivo .env con ANTHROPIC_API_KEY=tu-api-key")
+        print(f"Error de configuración: {e}")
+        print("\n Asegúrate de tener un archivo .env con ANTHROPIC_API_KEY=tu-api-key")
     except Exception as e:
-        print(f" Error inesperado: {e}")
+        print(f"Error inesperado: {e}")
