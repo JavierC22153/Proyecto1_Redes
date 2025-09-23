@@ -97,9 +97,9 @@ class MCPChatbot:
                 args=["-m", "mcp_server_git", "--repository", os.getcwd()]
             )
             await self.connect_to_server("git", git_params)
-            print(" Servidor git conectado")
+            print("✓ Servidor git conectado")
         except Exception as e:
-            print(f" Servidor git no disponible: {e}")
+            print(f"⚠ Servidor git no disponible: {e}")
         
         # Servidor F1 personalizado
         try:
@@ -137,14 +137,36 @@ class MCPChatbot:
                 if success:
                     print("🎮 Servidor LoL Build Advisor conectado")
                 else:
-                    print(" Error conectando servidor LoL")
+                    print("⚠ Error conectando servidor LoL")
             else:
-                print(f" Archivo lol_mcp_server.py no encontrado en: {lol_server_path}")
-                print(" Asegúrate de crear el archivo lol_mcp_server.py y la carpeta lol_modules/")
+                print(f"⚠ Archivo lol_mcp_server.py no encontrado en: {lol_server_path}")
+                print("⚠ Asegúrate de crear el archivo lol_mcp_server.py y la carpeta lol_modules/")
         except Exception as e:
-            print(f" Servidor LoL no disponible: {e}")
+            print(f"⚠ Servidor LoL no disponible: {e}")
             import traceback
-            print(f" Traceback: {traceback.format_exc()}")
+            print(f"⚠ Traceback: {traceback.format_exc()}")
+        
+        # Servidor Movie Advisor personalizado
+        try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            movie_server_path = os.path.join(current_dir, "movie_mcp_server.py")
+            print(f"🔍 Buscando servidor Movies en: {movie_server_path}")
+            
+            if os.path.exists(movie_server_path):
+                movie_params = StdioServerParameters(
+                    command=sys.executable,
+                    args=[movie_server_path]
+                )
+                success = await self.connect_to_server("movie_advisor", movie_params)
+                if success:
+                    print("🎬 Servidor Movie Advisor conectado")
+                else:
+                    print("⚠ Error conectando servidor Movies")
+            else:
+                print(f"⚠ Archivo movie_mcp_server.py no encontrado en: {movie_server_path}")
+        except Exception as e:
+            print(f"⚠ Servidor Movies no disponible: {e}")
+            print("⚠ Asegúrate de tener TMDB_API_KEY en tu archivo .env")
         
         print(f"Total de herramientas disponibles: {len(self.available_tools)}\n")
 
@@ -202,7 +224,8 @@ class MCPChatbot:
                 'filesystem': '📁',
                 'git': '🔧',
                 'f1_analyzer': '🏎️',
-                'lol_advisor': '🎮'
+                'lol_advisor': '🎮',
+                'movie_advisor': '🎬'
             }.get(server_name, '⚙️')
             
             info += f"{icon} {server_name.upper()}:\n"
@@ -218,6 +241,7 @@ class MCPChatbot:
 Puedes ayudar con:
 - 🏎️ ANÁLISIS DE FÓRMULA 1: Estrategias de carrera, análisis de neumáticos, timing de pit stops
 - 🎮 LEAGUE OF LEGENDS: Builds de campeones, runas, items, análisis de composiciones
+- 🎬 PELÍCULAS Y ENTRETENIMIENTO: Búsqueda de películas, recomendaciones, tendencias
 - 📁 MANIPULACIÓN DE ARCHIVOS: Leer, escribir, buscar archivos y directorios
 - 🔧 OPERACIONES DE GIT: Commits, branches, historial, estado del repositorio
 
@@ -234,6 +258,13 @@ League of Legends:
 - Analizar composiciones enemigas (damage mix, CC, healing)
 - Sugerir runas optimizadas según el matchup
 - Recomendar builds de items y hechizos de invocador
+
+Movies & Entertainment:
+- Buscar información detallada de películas por título
+- Obtener recomendaciones basadas en géneros y ratings
+- Descubrir películas aleatorias populares
+- Ver tendencias semanales de películas
+- Información de plataformas de streaming disponibles
 
 Responde de manera directa, técnica cuando sea necesario, y siempre explica qué herramientas estás usando y por qué."""
         
@@ -253,7 +284,8 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
                     'filesystem': '📁',
                     'git': '🔧', 
                     'f1_analyzer': '🏎️',
-                    'lol_advisor': '🎮'
+                    'lol_advisor': '🎮',
+                    'movie_advisor': '🎬'
                 }.get(server_name, '⚙️')
                 
                 tools_info += f"\n{icon} {server_name.upper()}:\n"
@@ -286,6 +318,7 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
                     icon = {
                         'f1_analyzer': '🏎️',
                         'lol_advisor': '🎮',
+                        'movie_advisor': '🎬',
                         'filesystem': '📁',
                         'git': '🔧'
                     }.get(server_name, '⚙️')
@@ -294,7 +327,7 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
                     result = await self.execute_mcp_tool(server_name, tool_name, arguments)
                     assistant_response += f"\n\n{result}\n"
                 else:
-                    assistant_response += f"\n Herramienta {tool_name} no encontrada.\n"
+                    assistant_response += f"\n⚠ Herramienta {tool_name} no encontrada.\n"
                     
         return assistant_response
 
@@ -368,21 +401,21 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
 
     def show_f1_examples(self):
         examples = """
-  EJEMPLOS DE ANÁLISIS DE FÓRMULA 1:
+ EJEMPLOS DE ANÁLISIS DE FÓRMULA 1:
 
-1. Pregunta sobre los pilotos que participaron
+1. Pregunta sobre los pilotos que participaron:
    "¿Qué pilotos corrieron en la carrera de Singapur?"
 
 2. Sesiones disponibles:
    "Muestra las sesiones de Spa en 2023"
 
-3. Busqueda por año
+3. Búsqueda por año:
    "¿Qué sesiones hubo en 2024?"
 
 4. Preguntas Descriptivas:
    "Lista completa de pilotos y equipos"
 
-5. Comparaciones
+5. Comparaciones:
    "Analiza la estrategia de Hamilton en la sesión 9158, luego la de Verstappen en la misma sesión"
 
  NOTAS:
@@ -394,7 +427,7 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
 
     def show_lol_examples(self):
         examples = """
-  EJEMPLOS DE LEAGUE OF LEGENDS:
+ EJEMPLOS DE LEAGUE OF LEGENDS:
 
 1. Configurar matchup con texto libre:
    "Quiero jugar Darius tank contra Garen, Maokai, Ahri, Jinx, Lulu"
@@ -411,14 +444,52 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
    "¿Qué runas usar con Azir AP contra mucho CC?"
    "Items para Garen tank vs equipo full AD"
 
-📋 FUNCIONALIDADES:
-   - ✅ Parser de texto libre (funciona sin configuración)
-   - ✅ Análisis automático de composiciones
-   - ✅ Sugerencias de runas adaptativas
-   - ✅ Builds de items situacionales
-   - ✅ Hechizos de invocador optimizados
+ FUNCIONALIDADES:
+   -  Parser de texto libre (funciona sin configuración)
+   -  Análisis automático de composiciones
+   -  Sugerencias de runas adaptativas
+   -  Builds de items situacionales
+   -  Hechizos de invocador optimizados
 
- CONSEJO: Puedes usar texto natural como "Jugar X contra Y, Z, W..."
+"""
+        print(examples)
+
+    def show_movies_examples(self):
+        examples = """
+ EJEMPLOS DE BÚSQUEDA DE PELÍCULAS:
+
+1. Búsqueda específica:
+   "Busca información sobre Inception"
+   "¿Qué sabes de la película The Dark Knight?"
+   "Información de Avengers Endgame"
+
+2. Recomendaciones personalizadas:
+   "Recomiéndame películas de acción con rating mayor a 8"
+   "Quiero ver comedias con rating mínimo de 7.5"
+   "Sugiere películas de ciencia ficción y drama"
+
+3. Descubrimiento:
+   "Dame una película aleatoria"
+   "Sorpréndeme con algo para ver"
+
+4. Tendencias:
+   "¿Qué películas están en tendencia esta semana?"
+   "Muestra las películas más populares"
+
+ GÉNEROS DISPONIBLES:
+   - Acción, Aventura, Animación, Comedia
+   - Crimen, Documental, Drama, Familia
+   - Fantasía, Historia, Horror, Música
+   - Misterio, Romance, Ciencia Ficción
+   - Terror, Thriller, Guerra, Western
+
+ INFORMACIÓN QUE OBTIENES:
+   - Sinopsis completa y detalles técnicos
+   - Ratings y año de lanzamiento
+   - Géneros y duración
+   - Plataformas de streaming disponibles
+   - Películas similares recomendadas
+   - Presupuesto y recaudación (cuando disponible)
 """
         print(examples)
 
@@ -428,12 +499,12 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
         # Inicializar servidores MCP
         await self.initialize_mcp_servers()
         
-        print(" Inicia la conversación escribiendo tu mensaje.")
+        print("🤖 Inicia la conversación escribiendo tu mensaje.")
         print("\n🔧 Comandos especiales disponibles:")
         print("  /logs     - Ver logs recientes")
-        print("  /tools    - Ver herramientas MCP disponibles")  
         print("  /f1       - Ver ejemplos de análisis F1")
         print("  /lol      - Ver ejemplos de League of Legends")
+        print("  /movies   - Ver ejemplos de búsqueda de películas")
         print("  /quit     - Salir del chatbot")
         print("=" * 80)
 
@@ -458,6 +529,9 @@ Responde de manera directa, técnica cuando sea necesario, y siempre explica qu�
                     continue
                 elif user_input.lower() == '/lol':
                     self.show_lol_examples()
+                    continue
+                elif user_input.lower() == '/movies':
+                    self.show_movies_examples()
                     continue
                 
                 print("\n🤖 Claude: ", end="", flush=True)
